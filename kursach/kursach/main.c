@@ -27,25 +27,40 @@ enum GameState {
     PLAYING,
     GAME_OVER
 };
-
 enum GameState gameState = MENU;
 
 static float getStrokeTextWidth(const char* text, void* font);
-
-void loadHighScore();
-void saveHighScore();
-void restartGame();
+void loadHighScore(void);
+void saveHighScore(void);
+void restartGame(void);
 int checkstolknovenie(int g[PLAY_HEIGHT][PLAY_WIDTH], int s, int r, int x, int y);
-void fixPiece();
-void clearLines();
-void spawnPiece();
+void fixPiece(void);
+void clearLines(void);
+void spawnPiece(void);
 void drawCellTransparent(int row, int col, int c, float alpha);
-void display();
+void display(void);
 void timer(int v);
+void specialKeys(int key, int x, int y);
 void mouseClick(int button, int state, int x, int y);
-void brut_for_bot();
 
+// --------------------------
+// Прототипы новых функций бота
+// --------------------------
+int simulate_place_and_score(int g[PLAY_HEIGHT][PLAY_WIDTH], int piece, int rot, int x, int *out_lines_cleared);
+int drop_height_for(int g[PLAY_HEIGHT][PLAY_WIDTH], int piece, int rot, int x);
+void bot_place_best_move(void);
+
+// --------------------------
+// Флаг: бот играет (включается при Play/Retry из меню)
+// --------------------------
 bool bot_enabled = false;
+
+// --------------------------
+// BENCHMARK GLOBALS (ADDED)
+// lastBotTimeMs - время последнего решения (ms)
+// totalBotTimeMs - суммарное время всех решений (ms)
+// botMoveCount - количество решений, сделанных ботом
+// --------------------------
 double lastBotTimeMs = 0.0;
 double totalBotTimeMs = 0.0;
 int botMoveCount = 0;
@@ -89,7 +104,7 @@ static const int shapes[7][4][4][4] = {
      {{0,1,0,0},{1,1,0,0},{1,0,0,0},{0,0,0,0}}}
 };
 
-// цвета фигур
+// цвета каждой из фигур
 static const float colors[7][3] = {
     {0.0f,1.0f,1.0f},{0.0f,0.0f,1.0f},{1.0f,0.5f,0.0f},
     {1.0f,1.0f,0.0f},{0.0f,1.0f,0.0f},{0.5f,0.0f,0.5f},
@@ -151,11 +166,12 @@ void restartGame() {
     memset(grid, 0, sizeof(grid));
     score = Lines = 0;
     gameOver = false;
-    alphaValue = 1.0f; // прозрачность
+    alphaValue = 1.0f;
     startTime = lastSpeedUpdate = time(NULL);
     Speed = 1000;
-    nextPiece = rand() % 7;
+    nextPiece = rand() % 7; // инициализация следующей фигуры
 
+    // BENCHMARK RESET
     lastBotTimeMs = 0.0;
     totalBotTimeMs = 0.0;
     botMoveCount = 0;
@@ -184,13 +200,11 @@ int checkstolknovenie(int g[PLAY_HEIGHT][PLAY_WIDTH], int s, int r, int x, int y
 }
 
 void fixPiece() {
-    for (int i = 0; i < 4; i++)
-        for (int j = 0; j < 4; j++)
-            if (shapes[currentPiece][currentRot][i][j]) {
-                int gy = currentY + i;
-                if (gy >= 0 && gy < PLAY_HEIGHT)
-                    grid[gy][currentX + j] = currentPiece + 1;
-            }
+    for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) if (shapes[currentPiece][currentRot][i][j]) {
+        int gy = currentY + i;
+        if (gy >= 0 && gy < PLAY_HEIGHT)
+            grid[gy][currentX + j] = currentPiece + 1;
+    }
     for (int j = 0; j < PLAY_WIDTH; j++) {
         if (grid[0][j]) {
             gameOver = true;
@@ -203,14 +217,9 @@ void fixPiece() {
 void clearLines() {
     for (int i = PLAY_HEIGHT - 1; i >= 0; i--) {
         bool full = true;
-        for (int j = 0; j < PLAY_WIDTH; j++)
-            if (!grid[i][j]) {
-                full = false;
-                break;
-            }
+        for (int j = 0; j < PLAY_WIDTH; j++) if (!grid[i][j]) { full = false; break; }
         if (full) {
-            for (int k = i; k > 0; k--)
-                memcpy(grid[k], grid[k - 1], sizeof(grid[k]));
+            for (int k = i; k > 0; k--) memcpy(grid[k], grid[k - 1], sizeof(grid[k]));
             memset(grid[0], 0, sizeof(grid[0]));
             score += 100;
             Lines++;
@@ -242,9 +251,11 @@ void drawCellTransparent(int row, int col, int c, float alpha) {
 
 void display(void) {
     glClear(GL_COLOR_BUFFER_BIT);
+
     if (gameState == MENU) {
         glColor3f(0.0f, 0.0f, 0.0f);
         glRecti(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+
         const char* title = "TETRIS";
         float titleScale = 0.8f;
         float titleWidth = getStrokeTextWidth(title, GLUT_STROKE_ROMAN) * titleScale;
@@ -254,17 +265,18 @@ void display(void) {
         glScalef(titleScale, titleScale, 1);
         for (int i = 0; title[i]; i++) {
             switch (title[i]) {
-                case 'T': glColor3f(1.0f, 0.0f, 0.0f); break;
-                case 'E': glColor3f(1.0f, 0.5f, 0.0f); break;
-                case 'R': glColor3f(0.0f, 1.0f, 0.0f); break;
-                case 'I': glColor3f(0.0f, 0.0f, 1.0f); break;
-                case 'S': glColor3f(0.5f, 0.0f, 0.5f); break;
-                default: glColor3f(1.0f, 1.0f, 0.0f); break;
+            case 'T': glColor3f(1.0f, 0.0f, 0.0f); break;
+            case 'E': glColor3f(1.0f, 0.5f, 0.0f); break;
+            case 'R': glColor3f(0.0f, 1.0f, 0.0f); break;
+            case 'I': glColor3f(0.0f, 0.0f, 1.0f); break;
+            case 'S': glColor3f(0.5f, 0.0f, 0.5f); break;
+            default: glColor3f(1.0f, 1.0f, 0.0f); break;
             }
             glutStrokeCharacter(GLUT_STROKE_ROMAN, title[i]);
         }
         glPopMatrix();
         glLineWidth(1);
+
         int playX = (WINDOW_WIDTH - MENU_BTN_WIDTH) / 2;
         int playY = WINDOW_HEIGHT / 2 + MENU_BTN_RASSTONIE / 2;
         glBegin(GL_QUADS);
@@ -287,6 +299,7 @@ void display(void) {
         }
         glPopMatrix();
         glLineWidth(1.0f);
+
         int exitX = (WINDOW_WIDTH - MENU_BTN_WIDTH) / 2;
         int exitY = WINDOW_HEIGHT / 2 - MENU_BTN_HEIGHT - MENU_BTN_RASSTONIE / 2;
         glBegin(GL_QUADS);
@@ -309,7 +322,8 @@ void display(void) {
         }
         glPopMatrix();
         glLineWidth(1.0f);
-    } else if (gameState == PLAYING) {
+    }
+    else if (gameState == PLAYING) {
         glColor3f(0.2f, 0.2f, 0.2f);
         glRecti(0, 0, SIDEBAR_WIDTH, WINDOW_HEIGHT);
         // Рамка под следующую фигуру
@@ -322,6 +336,7 @@ void display(void) {
         glVertex2i(20, WINDOW_HEIGHT - 30);
         glEnd();
         glLineWidth(1.0f);
+
         // Отрисовка следующей фигуры
         for (int i = 0; i < 4; ++i) {
             for (int j = 0; j < 4; ++j) {
@@ -349,9 +364,11 @@ void display(void) {
 
         time_t now = time(NULL);
         int t = (int)(now - startTime), m = t / 60, s = t % 60;
+
         char buf[64];
         glColor3f(1, 1, 1);
 
+        // We'll use a small HUD column (like in the example)
         int startY = WINDOW_HEIGHT - 160;
         int stepY = 25;
 
@@ -375,41 +392,42 @@ void display(void) {
         glRasterPos2i(10, startY - 3 * stepY);
         for (char* c = buf; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
 
-        // workbench и его средний показатель
+        // --------- BENCHMARK HUD (ADDED) -------------
         if (bot_enabled) {
             // Workbench - последний ход
             sprintf(buf, "Workbench: %.4f ms", lastBotTimeMs);
             glRasterPos2i(10, startY - 4 * stepY);
-            for (char* c = buf; *c; ++c)
-                glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+            for (char* c = buf; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
 
             // среднее
             double avg = botMoveCount > 0 ? totalBotTimeMs / botMoveCount : 0.0;
             sprintf(buf, "Average: %.4f ms", avg);
             glRasterPos2i(10, startY - 5 * stepY);
-            for (char* c = buf; *c; ++c)
-                glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+            for (char* c = buf; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
         }
+        // ----------------------------------------------
 
         for (int i = 0; i < PLAY_HEIGHT; i++)
             for (int j = 0; j < PLAY_WIDTH; j++)
                 drawCellTransparent(i, j, grid[i][j], 1.0f);
+
         if (!gameOver) {
-            for (int i = 0; i < 4; i++)
-                for (int j = 0; j < 4; j++)
-                    if (shapes[currentPiece][currentRot][i][j]) {
-                        int row = currentY + i, col = currentX + j;
-                        if (row >= 0)
-                            drawCellTransparent(row, col, currentPiece + 1, alphaValue);
-                    }
+            for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++)
+                if (shapes[currentPiece][currentRot][i][j]) {
+                    int row = currentY + i, col = currentX + j;
+                    if (row >= 0) drawCellTransparent(row, col, currentPiece + 1, alphaValue);
+                }
         }
-    } else if (gameState == GAME_OVER) {
+    }
+    else if (gameState == GAME_OVER) {
         if (score > Record) {
             Record = score;
             saveHighScore();
         }
+
         glColor4f(0, 0, 0, 0.7f);
         glRecti(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+
         const char* title = "GAME OVER";
         float tS = 0.5f, wT = getStrokeTextWidth(title, GLUT_STROKE_ROMAN) * tS;
         glColor3f(1, 0, 0);
@@ -422,7 +440,6 @@ void display(void) {
         glPopMatrix();
         glLineWidth(1);
 
-        // результат
         char sBuf2[32];
         sprintf(sBuf2, "Score: %d", score);
         float sS = 0.3f, wS = getStrokeTextWidth(sBuf2, GLUT_STROKE_ROMAN) * sS;
@@ -434,8 +451,9 @@ void display(void) {
         for (const char* c = sBuf2; *c; ++c)
             glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
         glPopMatrix();
+        glLineWidth(1);
 
-        // средний benchmark
+        // --------- BENCHMARK ON GAME OVER (ADDED) -------------
         if (bot_enabled && botMoveCount > 0) {
             double avg = totalBotTimeMs / botMoveCount;
             char avgBuf[64];
@@ -450,17 +468,29 @@ void display(void) {
             for (const char* c = avgBuf; *c; ++c)
                 glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
             glPopMatrix();
-        }
 
-        glLineWidth(1);
+            // последний Workbench (последнее время)
+            char lastBuf[64];
+            sprintf(lastBuf, "Last decision: %.4f ms", lastBotTimeMs);
+            float lS = 0.22f;
+            float lW = getStrokeTextWidth(lastBuf, GLUT_STROKE_ROMAN) * lS;
+            glColor3f(1, 1, 1);
+            glLineWidth(2);
+            glPushMatrix();
+            glTranslatef((WINDOW_WIDTH - lW) / 2, WINDOW_HEIGHT / 2 - 10, 0);
+            glScalef(lS, lS, 1);
+            for (const char* c = lastBuf; *c; ++c)
+                glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
+            glPopMatrix();
+        }
+        // ------------------------------------------------------
+
         btnX = (WINDOW_WIDTH - BTN_WIDTH) / 2;
         btnY = WINDOW_HEIGHT / 2 - BTN_HEIGHT - 20;
         glBegin(GL_QUADS);
-        glColor3f(0.2f, 0.6f, 1.0f);
-        glVertex2i(btnX, btnY);
+        glColor3f(0.2f, 0.6f, 1.0f); glVertex2i(btnX, btnY);
         glVertex2i(btnX + BTN_WIDTH, btnY);
-        glColor3f(0.1f, 0.3f, 0.8f);
-        glVertex2i(btnX + BTN_WIDTH, btnY + BTN_HEIGHT);
+        glColor3f(0.1f, 0.3f, 0.8f); glVertex2i(btnX + BTN_WIDTH, btnY + BTN_HEIGHT);
         glVertex2i(btnX, btnY + BTN_HEIGHT);
         glEnd();
         const char* rt2 = "Retry";
@@ -469,92 +499,197 @@ void display(void) {
         glRasterPos2i(btnX + (BTN_WIDTH - rtW2) / 2, btnY + (BTN_HEIGHT - rtH2) / 2 + rtH2 - 15);
         for (const char* c = rt2; *c; ++c)
             glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+
         int mmX = btnX, mmY = btnY - BTN_HEIGHT - 10;
         glBegin(GL_QUADS);
-        glColor3f(0.6f, 0.2f, 0.8f);
-        glVertex2i(mmX, mmY);
+        glColor3f(0.6f, 0.2f, 0.8f); glVertex2i(mmX, mmY);
         glVertex2i(mmX + BTN_WIDTH, mmY);
-        glColor3f(0.4f, 0.1f, 0.5f);
-        glVertex2i(mmX + BTN_WIDTH, mmY + BTN_HEIGHT);
+        glColor3f(0.4f, 0.1f, 0.5f); glVertex2i(mmX + BTN_WIDTH, mmY + BTN_HEIGHT);
         glVertex2i(mmX, mmY + BTN_HEIGHT);
         glEnd();
         const char* mm2 = "Main Menu";
         int mmW2 = glutBitmapLength(GLUT_BITMAP_HELVETICA_18, (const unsigned char*)mm2), mmH2 = 18;
         glColor3f(1, 1, 1);
         glRasterPos2i(mmX + (BTN_WIDTH - mmW2) / 2, mmY + (BTN_HEIGHT - mmH2) / 2 + mmH2 - 15);
-        for (const char* c = mm2; *c; ++c)
-            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+        for (const char* c = mm2; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
     }
+
     glutSwapBuffers();
 }
 
-void brut_for_bot(void) {
-    int bestX = 0, bestY = 0, bestRot = 0;
-    bool found = false;
+int drop_height_for(int grid[PLAY_HEIGHT][PLAY_WIDTH], int piece, int rot, int x) {
+    int y = -5;
+    while (!checkstolknovenie(grid, piece, rot, x, y + 1)) {
+        y++;
+        if (y > PLAY_HEIGHT) {
+            break;
+        }
+    }
+    return y;
+}
 
-    for (int rot = 0; rot < 4; rot++) {
-        for (int x = -5; x <= PLAY_WIDTH + 5; x++) { // от -5 до ширины поля+5 потому что часть фигуры может быть за полем
-            for (int y = -5; y < PLAY_HEIGHT; y++) { // -5 - фигура появляется выше координаты y = 0 (-2)
-                if (!checkstolknovenie(grid, currentPiece, rot, x, y)) {
-                    // Если нижняя граница фигуры (y + 4) достигла или пересекла дно поля (PLAY_HEIGHT)
-                    // или будет столкновение если мы сдвинем на 1
-                    if (y + 4 >= PLAY_HEIGHT || checkstolknovenie(grid, currentPiece, rot, x, y + 1)) {
-                        if (!found || y > bestY) {
-                            bestX = x;
-                            bestY = y;
-                            bestRot = rot;
-                            found = true;
-                        }
-                    }
+// Симулируем размещение фигуры и считаем эвристику.
+// Возвращаем числовую оценку (чем выше — лучше). out_lines_cleared заполняется количеством собранных линий.
+int simulate_place_and_score(int g_in[PLAY_HEIGHT][PLAY_WIDTH], int piece, int rot, int x, int *out_lines_cleared) {
+    int g[PLAY_HEIGHT][PLAY_WIDTH];
+    memcpy(g, g_in, sizeof(g)); // работаем на копии сетки
+
+    // Находим y куда упадёт фигура
+    int y = drop_height_for(g, piece, rot, x);
+
+    // Если при y фигура выходит выше верхней границы — недопустимый ход
+    if (y < -1) {
+        if (out_lines_cleared) *out_lines_cleared = 0;
+        return -1000000; // очень плохой ход
+    }
+
+    // Наложим фигуру на копию сетки
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if (shapes[piece][rot][i][j]) {
+                int gx = x + j;
+                int gy = y + i;
+                if (gy >= 0 && gy < PLAY_HEIGHT && gx >= 0 && gx < PLAY_WIDTH) {
+                    g[gy][gx] = piece + 1;
                 }
             }
         }
     }
 
-    if (found) {
-        currentRot = bestRot;
-        currentX = bestX;
-        currentY = bestY;
-        fixPiece();      // "Заморозить" фигуру на поле
-        clearLines();    // Удалить полные строки
-        spawnPiece();    // Создать новую фигуру
-    } else {
-        while (!checkstolknovenie(grid, currentPiece, currentRot, currentX, currentY + 1))
-            currentY++;
-        fixPiece();
-        clearLines();
-        spawnPiece();
+    // Считаем, сколько линий собирается при этом
+    int lines_cleared = 0;
+    for (int row = 0; row < PLAY_HEIGHT; ++row) {
+        bool full = true;
+        for (int col = 0; col < PLAY_WIDTH; ++col) if (!g[row][col]) { full = false; break; }
+        if (full) lines_cleared++;
+    }
+
+    // Считаем высоты колонок, дыры и bumpiness
+    int heights[PLAY_WIDTH];
+    for (int col = 0; col < PLAY_WIDTH; ++col) {
+        int h = 0;
+        for (int row = 0; row < PLAY_HEIGHT; ++row) {
+            if (g[row][col]) { h = PLAY_HEIGHT - row; break; }
+        }
+        heights[col] = h;
+    }
+
+    int aggregate_height = 0;
+    for (int c = 0; c < PLAY_WIDTH; ++c) aggregate_height += heights[c];
+
+    // Считаем дырки: пустые клетки ниже первой заполненной в колонке
+    int holes = 0;
+    for (int col = 0; col < PLAY_WIDTH; ++col) {
+        bool block_found = false;
+        for (int row = 0; row < PLAY_HEIGHT; ++row) {
+            if (g[row][col]) block_found = true;
+            else if (block_found) holes++;
+        }
+    }
+
+    // bumpiness = сумма разниц по соседним столбцам
+    int bumpiness = 0;
+    for (int c = 0; c < PLAY_WIDTH - 1; ++c) bumpiness += abs(heights[c] - heights[c + 1]);
+
+    // Эвристика (веса можно менять при необходимости)
+    int score_calc = 0;
+    score_calc += lines_cleared * 1000;      // сильный приоритет за очистку линий
+    score_calc -= aggregate_height * 10;     // чем меньше суммарная высота — лучше
+    score_calc -= holes * 150;               // дыры — очень плохо
+    score_calc -= bumpiness * 10;            // неровность тоже плоха
+
+    if (out_lines_cleared) *out_lines_cleared = lines_cleared;
+    return score_calc;
+}
+
+// Основная функция бота: перебирает все возможные X/rot и выбирает лучший по эвристике, затем ставит фигуру
+void bot_place_best_move(void) {
+    int bestScore = -1000000000;
+    int bestX = currentX;
+    int bestRot = currentRot;
+    int bestY = currentY;
+
+    // Перебор всех вращений
+    for (int rot = 0; rot < 4; ++rot) {
+        // Перебираем разумный диапазон X (от -4 до PLAY_WIDTH), чтобы покрыть все возможные смещения
+        for (int x = -4; x < PLAY_WIDTH; ++x) {
+            int lines_cleared = 0;
+            int val = simulate_place_and_score(grid, currentPiece, rot, x, &lines_cleared);
+            if (val > bestScore) {
+                int y = drop_height_for(grid, currentPiece, rot, x);
+                // Если y допустимо — сохраняем
+                if (y >= -1) {
+                    bestScore = val;
+                    bestX = x;
+                    bestRot = rot;
+                    bestY = y;
+                }
+            }
+        }
+    }
+
+    // Если не нашли валидного хода — это означает game over (оставляем текущее поведение)
+    if (bestScore <= -100000000) {
+        return;
+    }
+
+    // Применяем найденный ход: меняем поворот/позицию и фиксируем фигуру
+    currentRot = bestRot;
+    currentX = bestX;
+    currentY = bestY;
+
+    // Устанавливаем фигуру на поле (аналогично логике при "упоре")
+    fixPiece();
+
+    // Очищаем линии и увеличиваем счёт
+    clearLines();
+
+    // Инициализируем следующую фигуру и создаём новую
+    nextPiece = rand() % 7;
+    spawnPiece();
+
+    // Проверим — если новая фигура столкнулась — game over
+    if (checkstolknovenie(grid, currentPiece, currentRot, currentX, currentY)) {
+        gameOver = true;
+        gameState = GAME_OVER;
+        glutPostRedisplay();
     }
 }
 
 void timer(int v) {
     if (gameState == PLAYING && !gameOver) {
         time_t now = time(NULL);
-        // ускорение падение фигуры
         if (now - lastSpeedUpdate >= 30) {
             Speed = Speed > 200 ? Speed - 100 : 200;
             lastSpeedUpdate = now;
         }
+
         if (bot_enabled) {
+            // BENCHMARK: измеряем время выполнения принятия решения ботом
             clock_t start = clock();
-            brut_for_bot();
+            bot_place_best_move();
             clock_t end = clock();
+            // lastBotTimeMs — время последнего решения
             lastBotTimeMs = ((double)(end - start)) * 1000.0 / CLOCKS_PER_SEC;
+            // накопление и счётчик
             totalBotTimeMs += lastBotTimeMs;
             botMoveCount++;
 
+            // Обновляем дисплей и планируем следующий таймер
             glutPostRedisplay();
             glutTimerFunc(Speed, timer, 0);
             return;
         }
+        // -------------------------------------------------------------------------------
 
-        // падение фигуры по таймеру
+        // Оригинальное поведение — падение фигуры по таймеру (осталось для случаев ручного управления)
         if (!checkstolknovenie(grid, currentPiece, currentRot, currentX, currentY + 1)) {
             currentY++;
-        } else {
+        }
+        else {
             fixPiece();
             clearLines();
-            nextPiece = rand() % 7;
+            nextPiece = rand() % 7; // инициализация следующей фигуры
             spawnPiece();
             if (checkstolknovenie(grid, currentPiece, currentRot, currentX, currentY)) {
                 gameOver = true;
@@ -565,6 +700,34 @@ void timer(int v) {
         glutPostRedisplay();
         glutTimerFunc(Speed, timer, 0);
     }
+}
+
+void specialKeys(int key, int x, int y) {
+    if (gameState != PLAYING || gameOver) return;
+    switch (key) {
+    case GLUT_KEY_LEFT:
+        if (!checkstolknovenie(grid, currentPiece, currentRot, currentX - 1, currentY))
+            currentX--;
+        break;
+    case GLUT_KEY_RIGHT:
+        if (!checkstolknovenie(grid, currentPiece, currentRot, currentX + 1, currentY))
+            currentX++;
+        break;
+    case GLUT_KEY_DOWN:
+        if (!checkstolknovenie(grid, currentPiece, currentRot, currentX, currentY + 1))
+            currentY++;
+        break;
+    case GLUT_KEY_UP: {
+        int nr = (currentRot + 1) % 4;
+        if (!checkstolknovenie(grid, currentPiece, nr, currentX, currentY))
+            currentRot = nr;
+    }break;
+    case GLUT_KEY_HOME:
+        while (!checkstolknovenie(grid, currentPiece, currentRot, currentX, currentY + 1))
+            currentY++;
+        break;
+    }
+    glutPostRedisplay();
 }
 
 void mouseClick(int button, int state, int x, int y) {
@@ -582,7 +745,8 @@ void mouseClick(int button, int state, int x, int y) {
         if (x >= exitX && x <= exitX + MENU_BTN_WIDTH && my >= exitY && my <= exitY + MENU_BTN_HEIGHT) {
             exit(0);
         }
-    } else if (gameState == GAME_OVER && button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
+    }
+    else if (gameState == GAME_OVER && button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
         int my = WINDOW_HEIGHT - y;
         if (x >= btnX && x <= btnX + BTN_WIDTH && my >= btnY && my <= btnY + BTN_HEIGHT) {
             gameState = PLAYING;
@@ -610,9 +774,13 @@ int main(int argc, char** argv) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glOrtho(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT, -1, 1);
+
     glutDisplayFunc(display);
+    glutSpecialFunc(specialKeys);
     glutMouseFunc(mouseClick);
     restartGame();
     glutMainLoop();
     return 0;
 }
+
+
